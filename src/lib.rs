@@ -2,10 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use lazy_static::lazy_static;
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
 #[derive(Clone)]
 struct GridContent {
     grid: [[u8; 9]; 9],
@@ -105,36 +101,30 @@ impl GridContent {
 
     fn is_valid_sudoku(&self) -> bool {
         // Check if all values are within the range of 0 to 9
-        if !self.grid.iter().all(|row| row.iter().all(|&value| value <= 9)) {
-            return false;
-        }
-
+        let all_values_zero_to_nine = |_: &_| self.grid.iter().all(|row| row.iter().all(|&value| value <= 9));
         // Check each row, column, and sector for validity
-        let rows_valid = (0..9).all(|row| Self::is_valid(&self.grid[row]));
-        let cols_valid = (0..9).all(|col| Self::is_valid(&(0..9).map(|row| self.grid[row][col]).collect::<Vec<_>>()));
-        let sectors_valid = (0..9).all(|sector| {
+        let rows_valid = |_: &_| (0..9).all(|row| Self::has_no_repeating_non_zero_values(&self.grid[row]));
+        let cols_valid = |_: &_| (0..9).all(|col| Self::has_no_repeating_non_zero_values(&(0..9).map(|row| self.grid[row][col]).collect::<Vec<_>>()));
+        let sectors_valid = |_: &_| (0..9).all(|sector| {
             let row_start = (sector / 3) * 3;
             let col_start = (sector % 3) * 3;
-            Self::is_valid(&(0..3).flat_map(|i| (0..3).map(move |j| self.grid[row_start + i][col_start + j])).collect::<Vec<_>>())
+            Self::has_no_repeating_non_zero_values(&(0..3).flat_map(|i| (0..3).map(move |j| self.grid[row_start + i][col_start + j])).collect::<Vec<_>>())
         });
 
-        rows_valid && cols_valid && sectors_valid
+        Some(())
+            .filter(all_values_zero_to_nine)
+            .filter(rows_valid)
+            .filter(cols_valid)
+            .filter(sectors_valid)
+            .is_some()
     }
 
-    fn is_valid(values: &[u8]) -> bool {
-        let mut seen = [false; 10];
-        values.iter().all(|&value| {
-            if value != 0 && value <= 9 {
-                if seen[value as usize] {
-                    false // Value repeated
-                } else {
-                    seen[value as usize] = true;
-                    true
-                }
-            } else {
-                true
-            }
-        })
+    fn has_no_repeating_non_zero_values(values: &[u8]) -> bool {
+        let values_without_zeroes: Vec<&u8> = values.iter()
+            .filter(|x| **x!=0)
+            .collect();
+        let values_without_zeros_as_set:HashSet<&&u8> = values_without_zeroes.iter().collect();
+        values_without_zeroes.len() == values_without_zeros_as_set.len()
     }
 
     fn missing_numbers(&mut self, row: usize, col: usize) -> Vec<u8> {
@@ -186,6 +176,7 @@ impl GridContent {
         available_numbers
     }
     fn remove_number_from_related_cells(&mut self, row: usize, col: usize, number: u8) {
+        //clear current cell
         self.missing_numbers_cache.insert((row, col), vec![]);
         for i in 0..9 {
             // Remove the number from cells in the same row
@@ -212,34 +203,25 @@ impl GridContent {
         let missing_numbers = self.missing_numbers(row, col);
 
         // Create a set of missing numbers for the entire row
-        let mut row_missing_numbers: HashSet<u8> = HashSet::new();
-        for c in 0..9 {
-            if c != col {
-                row_missing_numbers.extend(self.missing_numbers(row, c));
-            }
-        }
+        let row_missing_numbers: HashSet<u8> = (0..9)
+            .filter(|&c| c != col)
+            .flat_map(|c| self.missing_numbers(row, c))
+            .collect();
 
         // Create a set of missing numbers for the entire column
-        let mut col_missing_numbers: HashSet<u8> = HashSet::new();
-        for r in 0..9 {
-            if r != row {
-                col_missing_numbers.extend(self.missing_numbers(r, col));
-            }
-        }
+        let col_missing_numbers: HashSet<u8> = (0..9)
+            .filter(|&r| r != row)
+            .flat_map(|r| self.missing_numbers(r, col))
+            .collect();
 
         // Create a set of missing numbers for the entire sector
         let row_start = (row / 3) * 3;
         let col_start = (col / 3) * 3;
-        let mut sector_missing_numbers: HashSet<u8> = HashSet::new();
-        for i in 0..3 {
-            for j in 0..3 {
-                let r = row_start + i;
-                let c = col_start + j;
-                if r != row || c != col {
-                    sector_missing_numbers.extend(self.missing_numbers(r, c));
-                }
-            }
-        }
+        let sector_missing_numbers: HashSet<u8> = (0..3)
+            .flat_map(|i| (0..3).map(move |j| (row_start + i, col_start + j)))
+            .filter(|(r, c)| *r != row || *c != col)
+            .flat_map(|(r, c)| self.missing_numbers(r, c))
+            .collect();
 
         // Filter out numbers that are already present in any other cell's missing numbers
         let unique_missing_numbers: Vec<u8> = missing_numbers
@@ -260,27 +242,29 @@ impl GridContent {
     }
 
     fn find_cell_with_one_missing(&mut self) -> Option<(usize, usize, u8)> {
-        for row in 0..9 {
-            for col in 0..9 {
+        (0..9)
+            .flat_map(|row| (0..9).map(move |col| (row, col)))
+            .find_map(|(row, col)| {
                 let missing_numbers = self.missing_numbers(row, col);
                 if missing_numbers.len() == 1 {
-                    return Some((row, col, missing_numbers[0]));
+                    Some((row, col, missing_numbers[0]))
+                } else {
+                    None
                 }
-            }
-        }
-        None
+            })
     }
 
     fn find_cell_with_unique_missing(&mut self) -> Option<(usize, usize, u8)> {
-        for row in 0..9 {
-            for col in 0..9 {
+        (0..9)
+            .flat_map(|row| (0..9).map(move |col| (row, col)))
+            .find_map(|(row, col)| {
                 let unique_missing_numbers = self.unique_missing_numbers(row, col);
-                if !unique_missing_numbers.is_empty() {
-                    return Some((row, col, unique_missing_numbers[0]));
+                if unique_missing_numbers.is_empty() {
+                    None
+                } else {
+                    Some((row, col, unique_missing_numbers[0]))
                 }
-            }
-        }
-        None
+            })
     }
 
     fn solve(&mut self) -> Result<GridContent, String> {
@@ -573,13 +557,6 @@ static ref FORCE_GRID_2: GridContent = GridContent{
         missing_numbers_cache: HashMap::new(),
     };
         );
-
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
 
     #[test]
     fn row_3() {
